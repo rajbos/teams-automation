@@ -282,16 +282,65 @@ namespace TeamsAutomation
                 if (!string.IsNullOrWhiteSpace(email))
                 {
                     Console.WriteLine($"Adding [{email}]");
-                    await inputBox.ClickAsync(); // Refocus input box before typing
-                    await page.Keyboard.PressAsync("Control+a"); // Select all existing text
-                    await inputBox.TypeAsync(email); // This will replace the selected text
+                    
+                    // Clear the input field first
+                    await inputBox.ClickAsync();
+                    await inputBox.FillAsync(""); // Clear any existing content
+                    
+                    // Type the email address
+                    await inputBox.TypeAsync(email, new() { Delay = 50 }); // Add slight delay between keystrokes
+                    
+                    // Wait for suggestions to appear and then press Enter
+                    await Task.Delay(1500); // Wait for autocomplete/suggestions to appear
                     await page.Keyboard.PressAsync("Enter");
-                    await Task.Delay(5000); // Wait a moment for the entry to be added
+                    
+                    // Wait for the email to be processed and added to the list
+                    await Task.Delay(3000);
+                    
+                    // Verify the email was added by checking if input is cleared
+                    var currentValue = await inputBox.InputValueAsync();
+                    if (!string.IsNullOrEmpty(currentValue))
+                    {
+                        Console.WriteLine($"Warning: Input still contains text after adding {email}: {currentValue}");
+                        await inputBox.FillAsync(""); // Clear it manually if needed
+                        await Task.Delay(500);
+                    }
+                    
+                    Console.WriteLine($"Successfully added [{email}]");
                 }
             }
 
-            // After adding all emails, you might want to click a 'Share' or 'Done' button
-            // For example: await page.ClickAsync("button:has-text('Share')");
+        
+            // Try to find and click the 'Share' button in the dialog actions
+            var shareButton = page.Locator("div.fui-DialogActions button:has-text('Share'), button.fui-Button:has-text('Share')");
+            bool shareButtonClicked = false;
+            for (int attempt = 1; attempt <= 5; attempt++)
+            {
+                try
+                {
+                    await shareButton.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 3000 });
+                    if (await shareButton.IsVisibleAsync())
+                    {
+                        await shareButton.ClickAsync(new() { Force = true });
+                        Console.WriteLine($"Clicked 'Share' button (attempt {attempt})");
+                        shareButtonClicked = true;
+                        break;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Attempt {attempt}: 'Share' button is not visible.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Attempt {attempt}: Could not click 'Share' button: {ex.Message}");
+                    await Task.Delay(1000);
+                }
+            }
+            if (!shareButtonClicked)
+            {
+                Console.WriteLine("Failed to click 'Share' button after multiple attempts.");
+            }
 
             Console.WriteLine("Press any key to close the browser...");
             Console.ReadKey();
