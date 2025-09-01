@@ -19,7 +19,7 @@ namespace TeamsAutomation
                 .ToList();
             profileDirs.Insert(0, new { Path = Path.Combine(userDataDir, "Default"), Name = "Default" });
 
-            Console.WriteLine("Please select a profile to use:");
+            Console.WriteLine("Please select a fprofile to use:");
             for (int i = 0; i < profileDirs.Count; i++)
             {
                 Console.WriteLine($"[{i}] {profileDirs[i].Name}");
@@ -39,19 +39,50 @@ namespace TeamsAutomation
 
             Console.WriteLine($"Using profile: {profileDirs[selectedProfileIndex].Name}");
 
+            // Error handling for browser launch and navigation
             using var playwright = await Playwright.CreateAsync();
-            var browserContext = await playwright.Chromium.LaunchPersistentContextAsync(profilePath, new BrowserTypeLaunchPersistentContextOptions
+            IBrowserContext? browserContext = null;
+            IPage? page = null;
+            try
             {
-                Headless = false,
-            });
+                browserContext = await playwright.Chromium.LaunchPersistentContextAsync(profilePath, new BrowserTypeLaunchPersistentContextOptions
+                {
+                    Headless = false,
+                    Channel = "msedge", // Use Microsoft Edge browser
+                });
+            }
+            catch (PlaywrightException ex)
+            {
+                Console.WriteLine($"Playwright browser launch error: {ex.Message}");
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"General error during browser launch: {ex.Message}");
+                return;
+            }
 
-            var page = browserContext.Pages.FirstOrDefault() ?? await browserContext.NewPageAsync();
-            var startUrl = Environment.GetEnvironmentVariable("START_URL") ?? "https://example.com";
-            await page.GotoAsync(startUrl); // Replace with the desired URL
+            try
+            {
+                page = browserContext.Pages.FirstOrDefault() ?? await browserContext.NewPageAsync();
+                var startUrl = Environment.GetEnvironmentVariable("START_URL") ?? "https://example.com";
+                await page.GotoAsync(startUrl); // Replace with the desired URL
+                Console.WriteLine($"Navigated to {startUrl}");
+            }
+            catch (PlaywrightException ex)
+            {
+                Console.WriteLine($"Playwright navigation error: {ex.Message}");
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"General error during navigation: {ex.Message}");
+                return;
+            }
 
             Console.WriteLine("Please log in to the application in the browser if needed.");
             Console.WriteLine("Press any key in this window to continue once you are logged in...");
-            Console.ReadKey();
+            Console.Read();
 
             var channelName = Environment.GetEnvironmentVariable("ChannelName");
             if (string.IsNullOrEmpty(channelName))
@@ -68,35 +99,194 @@ namespace TeamsAutomation
             }
 
             // Find the channel by its exact text and hover over it to reveal more options
-            var channelLocator = page.Locator($"div[role='treeitem']:has-text('{channelName}')").First;
             Console.WriteLine($"Looking for channel: {channelName}");
-            await channelLocator.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-            await channelLocator.ScrollIntoViewIfNeededAsync();
-            await channelLocator.HoverAsync();
+            ILocator? channelLocator = null;
+            bool channelFound = false;
+            int scrollAttempts = 0;
+
+            while (!channelFound && scrollAttempts < 10)
+            {
+                // Look for the exact channel name - use a more specific selector
+                var allChannels = page.Locator("div[role='treeitem']");
+                var channelCount = await allChannels.CountAsync();
+
+                Console.WriteLine($"Found {channelCount} channels in the sidebar");
+
+                // Find the exact match for the channel name
+                for (int i = 0; i < channelCount; i++)
+                {
+                    var channel = allChannels.Nth(i);
+                    var channelText = await channel.InnerTextAsync();
+
+                    if (channelText.Trim().Equals(channelName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        channelLocator = channel;
+                        channelFound = true;
+                        Console.WriteLine($"Channel '{channelName}' found at position {i}. Text: '{channelText.Trim()}'");
+
+                        // Scroll the found channel into view and make it visible
+                        await channelLocator.ScrollIntoViewIfNeededAsync();
+                        await Task.Delay(500); // Wait for scroll to complete
+
+                        // Verify it's actually visible in the viewport
+                        var isVisible = await channelLocator.IsVisibleAsync();
+                        Console.WriteLine($"Channel is visible in viewport: {isVisible}");
+
+                        if (isVisible)
+                        {
+                            await channelLocator.HoverAsync();
+                            Console.WriteLine($"Hovered over channel '{channelName}'");
+                        }
+                        break;
+                    }
+                }
+
+                if (!channelFound)
+                {
+                    scrollAttempts++;
+                    Console.WriteLine($"Channel not found, scrolling attempt {scrollAttempts}...");
+                    // Try to scroll the sidebar to load more channels
+                    var sidebar = page.Locator("div[role='tree']").First;
+                    await sidebar.EvaluateAsync("el => el.scrollBy(0, 300)");
+                    await Task.Delay(1000); // Wait for new channels to load
+                }
+            }
+
+            if (!channelFound || channelLocator == null)
+            {
+                Console.WriteLine($"Channel '{channelName}' could not be found after scrolling.");
+                return;
+            }
 
             // Click on the 'More options' button (...)
-            var moreOptionsButton = channelLocator.Locator("button[aria-label*='More options']").First;
-            await moreOptionsButton.ClickAsync(new() { Force = true });
+            await Task.Delay(500); // Wait for UI to update after hover
+            var moreOptionsButton = channelLocator.Locator("button[aria-label*='More options'], button[title*='More options']").First;
+            try
+            {
+                await moreOptionsButton.ClickAsync(new() { Force = true });
+                Console.WriteLine("More options button clicked");
+            }
+            catch (PlaywrightException ex)
+            {
+                Console.WriteLine($"Could not click More options: {ex.Message}");
+                return;
+            }
 
-            // Hover over 'Share channel' to open the sub-menu
-            await page.Locator("div[role='menuitem']:has-text('Share channel')").HoverAsync();
+            // Enumerate and log all visible menu items before clicking 'Share channel'
+            var menuItems = page.Locator("div[role='menuitem'], div[role='button'][data-testid*='menu-item']");
+            var menuItemCount = await menuItems.CountAsync();
+            Console.WriteLine($"Found {menuItemCount} menu items:");
 
-            // Click on 'with people'
-            await page.Locator("div[role='menuitem']:has-text('With people')").ClickAsync();
+            for (int i = 0; i < menuItemCount; i++)
+            {
+                var menuItem = menuItems.Nth(i);
+                var menuItemText = await menuItem.InnerTextAsync();
+                var isVisible = await menuItem.IsVisibleAsync();
+                var testId = await menuItem.GetAttributeAsync("data-testid");
+                Console.WriteLine($"Menu item {i}: '{menuItemText}' (Visible: {isVisible}, TestId: {testId})");
+            }
+
+            // Use the correct selector for 'Share channel' based on the actual HTML structure
+            var shareChannelMenuItemLocator = page.Locator("div[data-testid='channel-share-with-options-menu-item']");
+            bool shareChannelClicked = false;
+            for (int attempt = 1; attempt <= 5; attempt++)
+            {
+                try
+                {
+                    await shareChannelMenuItemLocator.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 3000 });
+                    if (await shareChannelMenuItemLocator.IsVisibleAsync())
+                    {
+                        // Hover first, then click to reveal submenu
+                        await shareChannelMenuItemLocator.HoverAsync();
+                        await Task.Delay(500); // Wait for submenu to appear
+                        Console.WriteLine($"Hovered over 'Share channel' (attempt {attempt})");
+                        shareChannelClicked = true;
+                        break;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Attempt {attempt}: 'Share channel' is not visible.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Attempt {attempt}: Could not hover 'Share channel': {ex.Message}");
+                    await Task.Delay(1000);
+                }
+            }
+
+            if (!shareChannelClicked)
+            {
+                Console.WriteLine("Failed to hover over 'Share channel' after multiple attempts.");
+                return;
+            }
+
+            // Wait for the submenu to appear and click 'With people'
+            var withPeopleMenuItem = page.Locator("div[role='menuitem']:has-text('With people')");
+            bool withPeopleClicked = false;
+            for (int attempt = 1; attempt <= 5; attempt++)
+            {
+                try
+                {
+                    await withPeopleMenuItem.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 3000 });
+                    await withPeopleMenuItem.ClickAsync();
+                    Console.WriteLine($"Clicked 'With people' (attempt {attempt})");
+                    withPeopleClicked = true;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Attempt {attempt}: Could not click 'With people': {ex.Message}");
+                    await Task.Delay(1000);
+                }
+            }
+            if (!withPeopleClicked)
+            {
+                Console.WriteLine("Failed to click 'With people' after multiple attempts.");
+                return;
+            }
 
             // Wait for the share dialog to appear and add emails
-            var shareInputSelector = "input[placeholder*='Type a name, group or channel']";
-            await page.WaitForSelectorAsync(shareInputSelector);
+            var shareInputSelector = "input#people-picker-input";
+            var fallbackSelector = "input[aria-label='Type a name or email']";
+            ILocator? inputBox = null;
+            try
+            {
+                await page.WaitForSelectorAsync(shareInputSelector, new() { Timeout = 5000 });
+                inputBox = page.Locator(shareInputSelector);
+                Console.WriteLine("Found input using #people-picker-input");
+            }
+            catch
+            {
+                try
+                {
+                    await page.WaitForSelectorAsync(fallbackSelector, new() { Timeout = 5000 });
+                    inputBox = page.Locator(fallbackSelector);
+                    Console.WriteLine("Found input using aria-label selector");
+                }
+                catch
+                {
+                    Console.WriteLine("Could not find the email input box.");
+                    return;
+                }
+            }
 
-            var emails = await File.ReadAllLinesAsync(emailsFileLocation);
+            var emails = (await File.ReadAllLinesAsync(emailsFileLocation))
+                .Select(l => l.Trim())
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .Distinct()
+                .ToList();
+
             foreach (var email in emails)
             {
                 if (!string.IsNullOrWhiteSpace(email))
                 {
                     Console.WriteLine($"Adding [{email}]");
-                    await page.FillAsync(shareInputSelector, email);
+                    await inputBox.ClickAsync(); // Refocus input box before typing
+                    await page.Keyboard.PressAsync("Control+a"); // Select all existing text
+                    await inputBox.TypeAsync(email); // This will replace the selected text
                     await page.Keyboard.PressAsync("Enter");
-                    await Task.Delay(1000); // Wait a moment for the entry to be added
+                    await Task.Delay(5000); // Wait a moment for the entry to be added
                 }
             }
 
