@@ -406,33 +406,31 @@ namespace TeamsAutomation
             
             try
             {
-                // Clear the input field first
                 await inputBox.ClickAsync();
-                await inputBox.FillAsync(""); // Clear any existing content
+                await inputBox.FillAsync("");
                 
-                // Type the email address
-                await inputBox.TypeAsync(email, new() { Delay = 30 }); // Reduced from 50ms to 30ms
+                await inputBox.TypeAsync(email, new() { Delay = 30 });
                 
-                // Wait for suggestions to appear - reduced and made adaptive
-                await Task.Delay(800); // Reduced from 1500ms to 800ms
+                // Wait for suggestions to appear 
+                await Task.Delay(800);
                 
                 // Try to detect if suggestions appeared by checking for dropdown/suggestions
                 var suggestionExists = await CheckForSuggestionsAsync(page);
                 if (!suggestionExists)
                 {
                     // If no suggestions appeared quickly, wait a bit more
-                    await Task.Delay(400); // Additional 400ms if needed
+                    await Task.Delay(400);
                 }
                 
                 await page.Keyboard.PressAsync("Enter");
                 
                 // Wait for email processing - adaptive delay based on input clearing
                 bool emailProcessed = false;
-                int maxWaitAttempts = 10; // Max 2 seconds (10 * 200ms)
+                int maxWaitAttempts = 10;
                 
                 for (int i = 0; i < maxWaitAttempts; i++)
                 {
-                    await Task.Delay(200); // Check every 200ms instead of waiting 3000ms
+                    await Task.Delay(200);
                     var currentValue = await inputBox.InputValueAsync();
                     
                     if (string.IsNullOrEmpty(currentValue))
@@ -452,8 +450,8 @@ namespace TeamsAutomation
                     if (!string.IsNullOrEmpty(currentValue))
                     {
                         Console.WriteLine($"⚠️ Warning: Input still contains text after adding {email}: {currentValue}");
-                        await inputBox.FillAsync(""); // Clear it manually if needed
-                        await Task.Delay(200); // Reduced from 500ms to 200ms
+                        await inputBox.FillAsync("");
+                        await Task.Delay(200);
                     }
                     else
                     {
@@ -596,7 +594,6 @@ namespace TeamsAutomation
                 {
                     var selectorButton = page.Locator(selector);
                     
-                    // Check if any buttons match this selector
                     var count = await selectorButton.CountAsync();
                     if (count == 0)
                     {
@@ -615,7 +612,6 @@ namespace TeamsAutomation
                         Console.WriteLine($"✅ Perfect! Found exactly 1 button for selector: {selector}");
                     }
                     
-                    // Try clicking the button
                     bool selectorSuccess = await TryClickButtonAsync(selectorButton, selector);
                     
                     if (selectorSuccess) 
