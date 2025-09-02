@@ -312,30 +312,92 @@ namespace TeamsAutomation
 
         
             // Try to find and click the 'Share' button in the dialog actions
-            var shareButton = page.Locator("div.fui-DialogActions button:has-text('Share'), button.fui-Button:has-text('Share')");
-            bool shareButtonClicked = false;
-            for (int attempt = 1; attempt <= 5; attempt++)
+            // First, let's enumerate all buttons in the dialog to see what's available
+            var allButtons = page.Locator("button");
+            var buttonCount = await allButtons.CountAsync();
+            Console.WriteLine($"Found {buttonCount} buttons in the dialog:");
+            
+            for (int i = 0; i < Math.Min(buttonCount, 20); i++) // Limit to first 20 buttons
             {
+                var button = allButtons.Nth(i);
                 try
                 {
-                    await shareButton.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 3000 });
-                    if (await shareButton.IsVisibleAsync())
+                    var buttonText = await button.InnerTextAsync();
+                    var isVisible = await button.IsVisibleAsync();
+                    var className = await button.GetAttributeAsync("class");
+                    var role = await button.GetAttributeAsync("role");
+                    var type = await button.GetAttributeAsync("type");
+                    Console.WriteLine($"Button {i}: Text='{buttonText}', Visible={isVisible}, Type={type}, Role={role}");
+                    if (!string.IsNullOrEmpty(className) && className.Length > 100)
                     {
-                        await shareButton.ClickAsync(new() { Force = true });
-                        Console.WriteLine($"Clicked 'Share' button (attempt {attempt})");
-                        shareButtonClicked = true;
-                        break;
-                    }
-                    else
-                    {
-                        Console.WriteLine($"Attempt {attempt}: 'Share' button is not visible.");
+                        Console.WriteLine($"  Classes: {className.Substring(0, 100)}...");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Attempt {attempt}: Could not click 'Share' button: {ex.Message}");
-                    await Task.Delay(1000);
+                    Console.WriteLine($"Button {i}: Could not read properties - {ex.Message}");
                 }
+            }
+            
+            // Use multiple selector strategies to find the Share button
+            var shareButtonSelectors = new[]
+            {
+                "button.fui-Button:has-text('Share')",
+                "button[type='button']:has-text('Share')",
+                "div.fui-DialogActions button:has-text('Share')",
+                "button.r1alrhcs:has-text('Share')", // Using one of the main CSS classes from the HTML
+                "button[role='button']:has-text('Share')"
+            };
+            
+            bool shareButtonClicked = false;
+            
+            foreach (var selector in shareButtonSelectors)
+            {
+                var shareButton = page.Locator(selector);
+                Console.WriteLine($"Trying selector: {selector}");
+                
+                for (int attempt = 1; attempt <= 3; attempt++)
+                {
+                    try
+                    {
+                        await shareButton.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 2000 });
+                        
+                        if (await shareButton.IsVisibleAsync())
+                        {
+                            // Scroll the button into view first
+                            await shareButton.ScrollIntoViewIfNeededAsync();
+                            await Task.Delay(500);
+                            
+                            // Try clicking with different methods
+                            try
+                            {
+                                await shareButton.ClickAsync(new() { Force = true });
+                                Console.WriteLine($"Clicked 'Share' button using selector '{selector}' (attempt {attempt})");
+                                shareButtonClicked = true;
+                                break;
+                            }
+                            catch
+                            {
+                                // If regular click fails, try using JavaScript click
+                                await shareButton.EvaluateAsync("element => element.click()");
+                                Console.WriteLine($"Clicked 'Share' button using JavaScript with selector '{selector}' (attempt {attempt})");
+                                shareButtonClicked = true;
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Attempt {attempt}: 'Share' button not visible with selector '{selector}'");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Attempt {attempt} with selector '{selector}': {ex.Message}");
+                        await Task.Delay(1000);
+                    }
+                }
+                
+                if (shareButtonClicked) break;
             }
             if (!shareButtonClicked)
             {
