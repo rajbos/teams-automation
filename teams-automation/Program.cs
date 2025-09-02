@@ -531,74 +531,15 @@ namespace TeamsAutomation
         static async Task ClickShareButtonAsync(IPage page)
         {
             var shareButton = await FindUniqueShareButtonAsync(page);
-            
             if (shareButton != null)
             {
                 bool clicked = await TryClickButtonAsync(shareButton, "Smart-detected Share button");
-                
                 if (clicked)
                 {
                     return;
                 }
             }
-            
-            Console.WriteLine("🔄 Falling back to selector-based approach...");
-            
-            var shareButtonSelectors = new[]
-            {
-                "div.fui-DialogActions button:has-text('Share')",
-                "button[role='button']:has-text('Share'):not(:has-text('with people'))",
-                "button.r1alrhcs:has-text('Share'):not(:has-text('with people'))",
-                "button[tabindex='0']:has-text('Share')",
-                "button:has-text('Share'):not([id*='splitButton'])"
-            };
-            
-            bool fallbackSuccess = false;
-            
-            foreach (var selector in shareButtonSelectors)
-            {
-                Console.WriteLine($"Trying selector: {selector}");
-                
-                try
-                {
-                    var selectorButton = page.Locator(selector);
-                    
-                    var count = await selectorButton.CountAsync();
-                    if (count == 0)
-                    {
-                        Console.WriteLine($"No buttons found for selector: {selector}");
-                        continue;
-                    }
-                    else if (count > 1)
-                    {
-                        Console.WriteLine($"⚠️ Strict mode violation: {count} buttons found for selector: {selector}");
-                        // Try to get the last one (usually the dialog action button)
-                        selectorButton = selectorButton.Last;
-                        Console.WriteLine($"Using last button from {count} matches");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"✅ Perfect! Found exactly 1 button for selector: {selector}");
-                    }
-                    
-                    bool selectorSuccess = await TryClickButtonAsync(selectorButton, selector);
-                    
-                    if (selectorSuccess) 
-                    {
-                        fallbackSuccess = true;
-                        break;
-                    }
-                }
-                catch (Exception selectorEx)
-                {
-                    Console.WriteLine($"❌ Selector '{selector}' failed: {selectorEx.Message}");
-                }
-            }
-            
-            if (!fallbackSuccess)
-            {
-                Console.WriteLine("❌ Failed to click 'Share' button after trying all methods.");
-            }
+            Console.WriteLine("❌ Failed to click 'Share' button using smart-detection.");
         }
         
         static async Task<bool> TryClickButtonAsync(ILocator button, string description)
