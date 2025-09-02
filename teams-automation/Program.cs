@@ -517,36 +517,7 @@ namespace TeamsAutomation
                     Console.WriteLine($"⚠️ Found {dialogCount} Share buttons in dialog actions, using last one");
                     return dialogShareButton.Last;
                 }
-                
-                var shareButtons = page.Locator("button:has-text('Share')");
-                var shareCount = await shareButtons.CountAsync();
-                
-                Console.WriteLine($"📊 Found {shareCount} buttons containing 'Share'");
-                
-                for (int i = 0; i < shareCount; i++)
-                {
-                    var button = shareButtons.Nth(i);
-                    var buttonText = await button.InnerTextAsync();
-                    var trimmedText = buttonText.Trim();
-                    
-                    Console.WriteLine($"  Button {i + 1}: '{trimmedText}'");
-                    
-                    if (trimmedText.Equals("Share", StringComparison.OrdinalIgnoreCase))
-                    {
-                        Console.WriteLine($"✅ Found exact 'Share' button at index {i}");
-                        return shareButtons.Nth(i);
-                    }
-                }
-                
-                var tabIndexButtons = page.Locator("button[tabindex='0']:has-text('Share')");
-                var tabIndexCount = await tabIndexButtons.CountAsync();
-                
-                if (tabIndexCount >= 1)
-                {
-                    Console.WriteLine($"✅ Found {tabIndexCount} tabindex Share button(s), using first one");
-                    return tabIndexButtons.First;
-                }
-                
+                                                
                 Console.WriteLine("❌ Could not find a unique Share button");
                 return null;
             }
