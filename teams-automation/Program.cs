@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -12,14 +13,82 @@ namespace TeamsAutomation
     {
         static async Task Main(string[] args)
         {
-            Env.Load();
+            try
+            {
+                Env.Load();
+                
+                // Select browser profile
+                string profilePath = await SelectBrowserProfileAsync();
+                
+                // Initialize browser
+                using var playwright = await Playwright.CreateAsync();
+                var browserContext = await LaunchBrowserAsync(playwright, profilePath);
+                if (browserContext == null) return;
+
+                // Navigate to start URL
+                var page = await NavigateToStartUrlAsync(browserContext);
+                if (page == null)
+                {
+                    await browserContext.CloseAsync();
+                    return;
+                }
+
+                // Wait for user login
+                await WaitForUserLoginAsync();
+
+                // Load configuration
+                var (channelName, emailsFileLocation) = LoadConfiguration();
+                if (channelName == null || emailsFileLocation == null)
+                {
+                    await browserContext.CloseAsync();
+                    return;
+                }
+
+                // Find and interact with the channel
+                var channelLocator = await FindChannelAsync(page, channelName);
+                if (channelLocator == null)
+                {
+                    await browserContext.CloseAsync();
+                    return;
+                }
+
+                // Open share dialog
+                if (!await OpenShareDialogAsync(page, channelLocator))
+                {
+                    await browserContext.CloseAsync();
+                    return;
+                }
+
+                // Add emails to share list
+                if (!await AddEmailsToShareAsync(page, emailsFileLocation))
+                {
+                    await browserContext.CloseAsync();
+                    return;
+                }
+
+                // Click the share button
+                await ClickShareButtonAsync(page);
+
+                Console.WriteLine("Press any key to close the browser...");
+                Console.ReadKey();
+                await browserContext.CloseAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An unexpected error occurred: {ex.Message}");
+            }
+        }
+
+        static async Task<string> SelectBrowserProfileAsync()
+        {
+            await Task.CompletedTask; // Make method properly async
             var userDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "Edge", "User Data");
             var profileDirs = Directory.GetDirectories(userDataDir, "Profile *")
                 .Select(p => new { Path = p, Name = GetProfileName(p) })
                 .ToList();
             profileDirs.Insert(0, new { Path = Path.Combine(userDataDir, "Default"), Name = "Default" });
 
-            Console.WriteLine("Please select a fprofile to use:");
+            Console.WriteLine("Please select a profile to use:");
             for (int i = 0; i < profileDirs.Count; i++)
             {
                 Console.WriteLine($"[{i}] {profileDirs[i].Name}");
@@ -36,69 +105,85 @@ namespace TeamsAutomation
             }
 
             string profilePath = profileDirs[selectedProfileIndex].Path;
-
             Console.WriteLine($"Using profile: {profileDirs[selectedProfileIndex].Name}");
+            
+            return profilePath;
+        }
 
-            // Error handling for browser launch and navigation
-            using var playwright = await Playwright.CreateAsync();
-            IBrowserContext? browserContext = null;
-            IPage? page = null;
+        static async Task<IBrowserContext?> LaunchBrowserAsync(IPlaywright playwright, string profilePath)
+        {
             try
             {
-                browserContext = await playwright.Chromium.LaunchPersistentContextAsync(profilePath, new BrowserTypeLaunchPersistentContextOptions
+                var browserContext = await playwright.Chromium.LaunchPersistentContextAsync(profilePath, new BrowserTypeLaunchPersistentContextOptions
                 {
                     Headless = false,
                     Channel = "msedge", // Use Microsoft Edge browser
                 });
+                return browserContext;
             }
             catch (PlaywrightException ex)
             {
                 Console.WriteLine($"Playwright browser launch error: {ex.Message}");
-                return;
+                return null;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"General error during browser launch: {ex.Message}");
-                return;
+                return null;
             }
+        }
 
+        static async Task<IPage?> NavigateToStartUrlAsync(IBrowserContext browserContext)
+        {
             try
             {
-                page = browserContext.Pages.FirstOrDefault() ?? await browserContext.NewPageAsync();
+                var page = browserContext.Pages.FirstOrDefault() ?? await browserContext.NewPageAsync();
                 var startUrl = Environment.GetEnvironmentVariable("START_URL") ?? "https://example.com";
-                await page.GotoAsync(startUrl); // Replace with the desired URL
+                await page.GotoAsync(startUrl);
                 Console.WriteLine($"Navigated to {startUrl}");
+                return page;
             }
             catch (PlaywrightException ex)
             {
                 Console.WriteLine($"Playwright navigation error: {ex.Message}");
-                return;
+                return null;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"General error during navigation: {ex.Message}");
-                return;
+                return null;
             }
+        }
 
+        static Task WaitForUserLoginAsync()
+        {
             Console.WriteLine("Please log in to the application in the browser if needed.");
             Console.WriteLine("Press any key in this window to continue once you are logged in...");
             Console.Read();
+            return Task.CompletedTask;
+        }
 
+        static (string? channelName, string? emailsFileLocation) LoadConfiguration()
+        {
             var channelName = Environment.GetEnvironmentVariable("ChannelName");
             if (string.IsNullOrEmpty(channelName))
             {
                 Console.WriteLine("ChannelName not found in .env file. Please add it.");
-                return;
+                return (null, null);
             }
 
             var emailsFileLocation = Environment.GetEnvironmentVariable("EmailsFileLocation");
             if (string.IsNullOrEmpty(emailsFileLocation) || !File.Exists(emailsFileLocation))
             {
                 Console.WriteLine("EmailsFileLocation not found or file does not exist. Please check your .env file.");
-                return;
+                return (null, null);
             }
 
-            // Find the channel by its exact text and hover over it to reveal more options
+            return (channelName, emailsFileLocation);
+        }
+
+        static async Task<ILocator?> FindChannelAsync(IPage page, string channelName)
+        {
             Console.WriteLine($"Looking for channel: {channelName}");
             ILocator? channelLocator = null;
             bool channelFound = false;
@@ -155,9 +240,14 @@ namespace TeamsAutomation
             if (!channelFound || channelLocator == null)
             {
                 Console.WriteLine($"Channel '{channelName}' could not be found after scrolling.");
-                return;
+                return null;
             }
 
+            return channelLocator;
+        }
+
+        static async Task<bool> OpenShareDialogAsync(IPage page, ILocator channelLocator)
+        {
             // Click on the 'More options' button (...)
             await Task.Delay(500); // Wait for UI to update after hover
             var moreOptionsButton = channelLocator.Locator("button[aria-label*='More options'], button[title*='More options']").First;
@@ -169,10 +259,24 @@ namespace TeamsAutomation
             catch (PlaywrightException ex)
             {
                 Console.WriteLine($"Could not click More options: {ex.Message}");
-                return;
+                return false;
             }
 
             // Enumerate and log all visible menu items before clicking 'Share channel'
+            await LogMenuItemsAsync(page);
+
+            // Hover over 'Share channel' to reveal submenu
+            if (!await HoverShareChannelAsync(page))
+            {
+                return false;
+            }
+
+            // Click 'With people' in the submenu
+            return await ClickWithPeopleAsync(page);
+        }
+
+        static async Task LogMenuItemsAsync(IPage page)
+        {
             var menuItems = page.Locator("div[role='menuitem'], div[role='button'][data-testid*='menu-item']");
             var menuItemCount = await menuItems.CountAsync();
             Console.WriteLine($"Found {menuItemCount} menu items:");
@@ -185,10 +289,13 @@ namespace TeamsAutomation
                 var testId = await menuItem.GetAttributeAsync("data-testid");
                 Console.WriteLine($"Menu item {i}: '{menuItemText}' (Visible: {isVisible}, TestId: {testId})");
             }
+        }
 
-            // Use the correct selector for 'Share channel' based on the actual HTML structure
+        static async Task<bool> HoverShareChannelAsync(IPage page)
+        {
             var shareChannelMenuItemLocator = page.Locator("div[data-testid='channel-share-with-options-menu-item']");
             bool shareChannelClicked = false;
+            
             for (int attempt = 1; attempt <= 5; attempt++)
             {
                 try
@@ -218,12 +325,16 @@ namespace TeamsAutomation
             if (!shareChannelClicked)
             {
                 Console.WriteLine("Failed to hover over 'Share channel' after multiple attempts.");
-                return;
             }
 
-            // Wait for the submenu to appear and click 'With people'
+            return shareChannelClicked;
+        }
+
+        static async Task<bool> ClickWithPeopleAsync(IPage page)
+        {
             var withPeopleMenuItem = page.Locator("div[role='menuitem']:has-text('With people')");
             bool withPeopleClicked = false;
+            
             for (int attempt = 1; attempt <= 5; attempt++)
             {
                 try
@@ -240,173 +351,436 @@ namespace TeamsAutomation
                     await Task.Delay(1000);
                 }
             }
+            
             if (!withPeopleClicked)
             {
                 Console.WriteLine("Failed to click 'With people' after multiple attempts.");
-                return;
             }
 
-            // Wait for the share dialog to appear and add emails
+            return withPeopleClicked;
+        }
+
+        static async Task<bool> AddEmailsToShareAsync(IPage page, string emailsFileLocation)
+        {
+            // Find the email input box
+            var inputBox = await FindEmailInputBoxAsync(page);
+            if (inputBox == null)
+            {
+                Console.WriteLine("Could not find the email input box.");
+                return false;
+            }
+
+            // Read and process emails from file
+            var emails = await ReadEmailsFromFileAsync(emailsFileLocation);
+            
+            // Add each email to the share list
+            foreach (var email in emails)
+            {
+                if (!string.IsNullOrWhiteSpace(email))
+                {
+                    await AddSingleEmailAsync(inputBox, email, page);
+                }
+            }
+
+            return true;
+        }
+
+        static async Task<ILocator?> FindEmailInputBoxAsync(IPage page)
+        {
             var shareInputSelector = "input#people-picker-input";
             var fallbackSelector = "input[aria-label='Type a name or email']";
-            ILocator? inputBox = null;
+            
             try
             {
                 await page.WaitForSelectorAsync(shareInputSelector, new() { Timeout = 5000 });
-                inputBox = page.Locator(shareInputSelector);
                 Console.WriteLine("Found input using #people-picker-input");
+                return page.Locator(shareInputSelector);
             }
             catch
             {
                 try
                 {
                     await page.WaitForSelectorAsync(fallbackSelector, new() { Timeout = 5000 });
-                    inputBox = page.Locator(fallbackSelector);
                     Console.WriteLine("Found input using aria-label selector");
+                    return page.Locator(fallbackSelector);
                 }
                 catch
                 {
-                    Console.WriteLine("Could not find the email input box.");
-                    return;
+                    return null;
                 }
             }
+        }
 
+        static async Task<List<string>> ReadEmailsFromFileAsync(string emailsFileLocation)
+        {
             var emails = (await File.ReadAllLinesAsync(emailsFileLocation))
                 .Select(l => l.Trim())
                 .Where(l => !string.IsNullOrWhiteSpace(l))
                 .Distinct()
                 .ToList();
+            
+            return emails;
+        }
 
-            foreach (var email in emails)
+        static async Task AddSingleEmailAsync(ILocator inputBox, string email, IPage page)
+        {
+            Console.WriteLine($"📧 Adding [{email}]");
+            
+            try
             {
-                if (!string.IsNullOrWhiteSpace(email))
+                // Clear the input field first
+                await inputBox.ClickAsync();
+                await inputBox.FillAsync(""); // Clear any existing content
+                
+                // Type the email address
+                await inputBox.TypeAsync(email, new() { Delay = 30 }); // Reduced from 50ms to 30ms
+                
+                // Wait for suggestions to appear - reduced and made adaptive
+                await Task.Delay(800); // Reduced from 1500ms to 800ms
+                
+                // Try to detect if suggestions appeared by checking for dropdown/suggestions
+                var suggestionExists = await CheckForSuggestionsAsync(page);
+                if (!suggestionExists)
                 {
-                    Console.WriteLine($"Adding [{email}]");
-                    
-                    // Clear the input field first
-                    await inputBox.ClickAsync();
-                    await inputBox.FillAsync(""); // Clear any existing content
-                    
-                    // Type the email address
-                    await inputBox.TypeAsync(email, new() { Delay = 50 }); // Add slight delay between keystrokes
-                    
-                    // Wait for suggestions to appear and then press Enter
-                    await Task.Delay(1500); // Wait for autocomplete/suggestions to appear
-                    await page.Keyboard.PressAsync("Enter");
-                    
-                    // Wait for the email to be processed and added to the list
-                    await Task.Delay(3000);
-                    
-                    // Verify the email was added by checking if input is cleared
+                    // If no suggestions appeared quickly, wait a bit more
+                    await Task.Delay(400); // Additional 400ms if needed
+                }
+                
+                await page.Keyboard.PressAsync("Enter");
+                
+                // Wait for email processing - adaptive delay based on input clearing
+                bool emailProcessed = false;
+                int maxWaitAttempts = 10; // Max 2 seconds (10 * 200ms)
+                
+                for (int i = 0; i < maxWaitAttempts; i++)
+                {
+                    await Task.Delay(200); // Check every 200ms instead of waiting 3000ms
                     var currentValue = await inputBox.InputValueAsync();
+                    
+                    if (string.IsNullOrEmpty(currentValue))
+                    {
+                        emailProcessed = true;
+                        Console.WriteLine($"✅ Email [{email}] processed in {(i + 1) * 200}ms");
+                        break;
+                    }
+                }
+                
+                if (!emailProcessed)
+                {
+                    // Fallback: check one more time after original delay
+                    await Task.Delay(1000);
+                    var currentValue = await inputBox.InputValueAsync();
+                    
                     if (!string.IsNullOrEmpty(currentValue))
                     {
-                        Console.WriteLine($"Warning: Input still contains text after adding {email}: {currentValue}");
+                        Console.WriteLine($"⚠️ Warning: Input still contains text after adding {email}: {currentValue}");
                         await inputBox.FillAsync(""); // Clear it manually if needed
-                        await Task.Delay(500);
+                        await Task.Delay(200); // Reduced from 500ms to 200ms
                     }
-                    
-                    Console.WriteLine($"Successfully added [{email}]");
+                    else
+                    {
+                        Console.WriteLine($"✅ Email [{email}] processed (slower response)");
+                    }
                 }
             }
-
-        
-            // Try to find and click the 'Share' button in the dialog actions
-            // First, let's enumerate all buttons in the dialog to see what's available
-            var allButtons = page.Locator("button");
-            var buttonCount = await allButtons.CountAsync();
-            Console.WriteLine($"Found {buttonCount} buttons in the dialog:");
-            
-            for (int i = 0; i < Math.Min(buttonCount, 20); i++) // Limit to first 20 buttons
+            catch (Exception ex)
             {
-                var button = allButtons.Nth(i);
+                Console.WriteLine($"❌ Error adding email [{email}]: {ex.Message}");
+            }
+        }
+        
+        static async Task<bool> CheckForSuggestionsAsync(IPage page)
+        {
+            try
+            {
+                // Common selectors for suggestion dropdowns in Teams/Office365
+                var suggestionSelectors = new[]
+                {
+                    "[role='listbox']",
+                    "[role='option']", 
+                    ".ms-Suggestions",
+                    ".ms-BasePicker-suggestion",
+                    "[data-testid*='suggestion']",
+                    ".fui-Listbox"
+                };
+                
+                foreach (var selector in suggestionSelectors)
+                {
+                    var suggestions = page.Locator(selector);
+                    var count = await suggestions.CountAsync();
+                    if (count > 0)
+                    {
+                        Console.WriteLine($"🔍 Found {count} suggestions");
+                        return true;
+                    }
+                }
+                
+                return false;
+            }
+            catch
+            {
+                return false; // If error checking, assume no suggestions
+            }
+        }
+
+        static async Task<ILocator?> FindUniqueShareButtonAsync(IPage page)
+        {
+            Console.WriteLine("🎯 Finding the correct Share button...");
+            
+            try
+            {
+                // Strategy 1: Try the dialog actions area first (most specific)
+                var dialogShareButton = page.Locator("div.fui-DialogActions button:has-text('Share')");
+                var dialogCount = await dialogShareButton.CountAsync();
+                
+                if (dialogCount == 1)
+                {
+                    Console.WriteLine("✅ Found unique Share button in dialog actions");
+                    return dialogShareButton;
+                }
+                else if (dialogCount > 1)
+                {
+                    Console.WriteLine($"⚠️ Found {dialogCount} Share buttons in dialog actions, using last one");
+                    return dialogShareButton.Last;
+                }
+                
+                // Strategy 2: Look for the button that doesn't contain "with people"
+                var shareButtons = page.Locator("button:has-text('Share')");
+                var shareCount = await shareButtons.CountAsync();
+                
+                Console.WriteLine($"📊 Found {shareCount} buttons containing 'Share'");
+                
+                for (int i = 0; i < shareCount; i++)
+                {
+                    var button = shareButtons.Nth(i);
+                    var buttonText = await button.InnerTextAsync();
+                    var trimmedText = buttonText.Trim();
+                    
+                    Console.WriteLine($"  Button {i + 1}: '{trimmedText}'");
+                    
+                    // Look for the button that says exactly "Share" (not "Share with people")
+                    if (trimmedText.Equals("Share", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine($"✅ Found exact 'Share' button at index {i}");
+                        return shareButtons.Nth(i);
+                    }
+                }
+                
+                // Strategy 3: Use tabindex to find the main action button
+                var tabIndexButtons = page.Locator("button[tabindex='0']:has-text('Share')");
+                var tabIndexCount = await tabIndexButtons.CountAsync();
+                
+                if (tabIndexCount >= 1)
+                {
+                    Console.WriteLine($"✅ Found {tabIndexCount} tabindex Share button(s), using first one");
+                    return tabIndexButtons.First;
+                }
+                
+                Console.WriteLine("❌ Could not find a unique Share button");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error finding Share button: {ex.Message}");
+                return null;
+            }
+        }
+
+        static async Task ClickShareButtonAsync(IPage page)
+        {
+            // First, let's enumerate all buttons in the dialog to see what's available
+            await LogAllButtonsAsync(page);
+            
+            // Try to find the unique share button intelligently
+            var shareButton = await FindUniqueShareButtonAsync(page);
+            
+            if (shareButton != null)
+            {
+                // Try to click the found button
+                bool clicked = await TryClickButtonAsync(shareButton, "Smart-detected Share button");
+                
+                if (clicked)
+                {
+                    return; // Success!
+                }
+            }
+            
+            // Fallback: Use the old method with improved selectors
+            Console.WriteLine("🔄 Falling back to selector-based approach...");
+            
+            // Use optimized selector strategies based on actual testing
+            var shareButtonSelectors = new[]
+            {
+                "div.fui-DialogActions button:has-text('Share')", // This one works - try it first!
+                "button[role='button']:has-text('Share'):not(:has-text('with people'))", // Exclude "Share with people"
+                "button.r1alrhcs:has-text('Share'):not(:has-text('with people'))", // Using CSS class but exclude "with people"
+                "button[tabindex='0']:has-text('Share')", // Use tabindex attribute
+                "button:has-text('Share'):not([id*='splitButton'])" // Exclude split button
+            };
+            
+            bool fallbackSuccess = false;
+            
+            foreach (var selector in shareButtonSelectors)
+            {
+                Console.WriteLine($"Trying selector: {selector}");
+                
                 try
                 {
-                    var buttonText = await button.InnerTextAsync();
-                    var isVisible = await button.IsVisibleAsync();
-                    var className = await button.GetAttributeAsync("class");
-                    var role = await button.GetAttributeAsync("role");
-                    var type = await button.GetAttributeAsync("type");
-                    Console.WriteLine($"Button {i}: Text='{buttonText}', Visible={isVisible}, Type={type}, Role={role}");
-                    if (!string.IsNullOrEmpty(className) && className.Length > 100)
+                    var selectorButton = page.Locator(selector);
+                    
+                    // Check if any buttons match this selector
+                    var count = await selectorButton.CountAsync();
+                    if (count == 0)
                     {
-                        Console.WriteLine($"  Classes: {className.Substring(0, 100)}...");
+                        Console.WriteLine($"No buttons found for selector: {selector}");
+                        continue;
+                    }
+                    else if (count > 1)
+                    {
+                        Console.WriteLine($"⚠️ Strict mode violation: {count} buttons found for selector: {selector}");
+                        // Try to get the last one (usually the dialog action button)
+                        selectorButton = selectorButton.Last;
+                        Console.WriteLine($"Using last button from {count} matches");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"✅ Perfect! Found exactly 1 button for selector: {selector}");
+                    }
+                    
+                    // Try clicking the button
+                    bool selectorSuccess = await TryClickButtonAsync(selectorButton, selector);
+                    
+                    if (selectorSuccess) 
+                    {
+                        fallbackSuccess = true;
+                        break;
+                    }
+                }
+                catch (Exception selectorEx)
+                {
+                    Console.WriteLine($"❌ Selector '{selector}' failed: {selectorEx.Message}");
+                }
+            }
+            
+            if (!fallbackSuccess)
+            {
+                Console.WriteLine("❌ Failed to click 'Share' button after trying all methods.");
+            }
+        }
+        
+        static async Task<bool> TryClickButtonAsync(ILocator button, string description)
+        {
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                try
+                {
+                    await button.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 2000 });
+                    
+                    if (await button.IsVisibleAsync())
+                    {
+                        // Scroll the button into view first
+                        await button.ScrollIntoViewIfNeededAsync();
+                        await Task.Delay(500);
+                        
+                        // Try clicking with different methods
+                        try
+                        {
+                            await button.ClickAsync(new() { Force = true });
+                            Console.WriteLine($"✅ Successfully clicked Share button using {description} (attempt {attempt})");
+                            return true;
+                        }
+                        catch (Exception clickEx)
+                        {
+                            Console.WriteLine($"Regular click failed: {clickEx.Message}");
+                            // If regular click fails, try using JavaScript click
+                            await button.EvaluateAsync("element => element.click()");
+                            Console.WriteLine($"✅ Successfully clicked Share button using JavaScript with {description} (attempt {attempt})");
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Attempt {attempt}: Share button not visible with {description}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Button {i}: Could not read properties - {ex.Message}");
+                    Console.WriteLine($"Attempt {attempt} with {description}: {ex.Message}");
+                    if (attempt < 3)
+                    {
+                        await Task.Delay(1000);
+                    }
                 }
             }
             
-            // Use multiple selector strategies to find the Share button
-            var shareButtonSelectors = new[]
+            return false;
+        }
+
+        static async Task LogAllButtonsAsync(IPage page)
+        {
+            try
             {
-                "button.fui-Button:has-text('Share')",
-                "button[type='button']:has-text('Share')",
-                "div.fui-DialogActions button:has-text('Share')",
-                "button.r1alrhcs:has-text('Share')", // Using one of the main CSS classes from the HTML
-                "button[role='button']:has-text('Share')"
-            };
-            
-            bool shareButtonClicked = false;
-            
-            foreach (var selector in shareButtonSelectors)
-            {
-                var shareButton = page.Locator(selector);
-                Console.WriteLine($"Trying selector: {selector}");
+                var allButtons = page.Locator("button");
+                var buttonCount = await allButtons.CountAsync();
+                Console.WriteLine($"🔍 Found {buttonCount} buttons in the dialog:");
                 
-                for (int attempt = 1; attempt <= 3; attempt++)
+                // Specifically look for Share-related buttons
+                var shareButtons = page.Locator("button:has-text('Share')");
+                var shareButtonCount = await shareButtons.CountAsync();
+                Console.WriteLine($"📋 Found {shareButtonCount} buttons containing 'Share':");
+                
+                for (int i = 0; i < shareButtonCount; i++)
                 {
+                    var button = shareButtons.Nth(i);
                     try
                     {
-                        await shareButton.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 2000 });
+                        var buttonText = await button.InnerTextAsync();
+                        var isVisible = await button.IsVisibleAsync();
+                        var id = await button.GetAttributeAsync("id");
+                        var role = await button.GetAttributeAsync("role");
+                        var type = await button.GetAttributeAsync("type");
+                        var tabIndex = await button.GetAttributeAsync("tabindex");
                         
-                        if (await shareButton.IsVisibleAsync())
+                        Console.WriteLine($"  Share Button {i + 1}: '{buttonText.Trim()}'");
+                        Console.WriteLine($"    Visible: {isVisible}, Type: {type}, Role: {role}, TabIndex: {tabIndex}");
+                        if (!string.IsNullOrEmpty(id))
                         {
-                            // Scroll the button into view first
-                            await shareButton.ScrollIntoViewIfNeededAsync();
-                            await Task.Delay(500);
-                            
-                            // Try clicking with different methods
-                            try
-                            {
-                                await shareButton.ClickAsync(new() { Force = true });
-                                Console.WriteLine($"Clicked 'Share' button using selector '{selector}' (attempt {attempt})");
-                                shareButtonClicked = true;
-                                break;
-                            }
-                            catch
-                            {
-                                // If regular click fails, try using JavaScript click
-                                await shareButton.EvaluateAsync("element => element.click()");
-                                Console.WriteLine($"Clicked 'Share' button using JavaScript with selector '{selector}' (attempt {attempt})");
-                                shareButtonClicked = true;
-                                break;
-                            }
-                        }
-                        else
-                        {
-                            Console.WriteLine($"Attempt {attempt}: 'Share' button not visible with selector '{selector}'");
+                            Console.WriteLine($"    ID: {id}");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Attempt {attempt} with selector '{selector}': {ex.Message}");
-                        await Task.Delay(1000);
+                        Console.WriteLine($"  Share Button {i + 1}: Could not read properties - {ex.Message}");
                     }
                 }
                 
-                if (shareButtonClicked) break;
+                // Log a few general buttons for context (limit to first 10)
+                Console.WriteLine($"\n📝 Sample of all buttons (showing first 10 of {buttonCount}):");
+                for (int i = 0; i < Math.Min(buttonCount, 10); i++)
+                {
+                    var button = allButtons.Nth(i);
+                    try
+                    {
+                        var buttonText = await button.InnerTextAsync();
+                        var isVisible = await button.IsVisibleAsync();
+                        var type = await button.GetAttributeAsync("type");
+                        
+                        // Only show if it has meaningful text
+                        if (!string.IsNullOrWhiteSpace(buttonText) && buttonText.Length < 50)
+                        {
+                            Console.WriteLine($"  Button {i + 1}: '{buttonText.Trim()}' (Visible: {isVisible}, Type: {type})");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"  Button {i + 1}: Could not read properties - {ex.Message}");
+                    }
+                }
             }
-            if (!shareButtonClicked)
+            catch (Exception ex)
             {
-                Console.WriteLine("Failed to click 'Share' button after multiple attempts.");
+                Console.WriteLine($"❌ Error logging buttons: {ex.Message}");
             }
-
-            Console.WriteLine("Press any key to close the browser...");
-            Console.ReadKey();
-            await browserContext.CloseAsync();
         }
 
         static string GetProfileName(string profilePath)
