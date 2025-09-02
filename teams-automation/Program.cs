@@ -559,8 +559,6 @@ namespace TeamsAutomation
 
         static async Task ClickShareButtonAsync(IPage page)
         {
-            await LogAllButtonsAsync(page);
-            
             var shareButton = await FindUniqueShareButtonAsync(page);
             
             if (shareButton != null)
@@ -675,70 +673,6 @@ namespace TeamsAutomation
             }
             
             return false;
-        }
-
-        static async Task LogAllButtonsAsync(IPage page)
-        {
-            try
-            {
-                var allButtons = page.Locator("button");
-                var buttonCount = await allButtons.CountAsync();
-                Console.WriteLine($"🔍 Found {buttonCount} buttons in the dialog:");
-                
-                var shareButtons = page.Locator("button:has-text('Share')");
-                var shareButtonCount = await shareButtons.CountAsync();
-                Console.WriteLine($"📋 Found {shareButtonCount} buttons containing 'Share':");
-                
-                for (int i = 0; i < shareButtonCount; i++)
-                {
-                    var button = shareButtons.Nth(i);
-                    try
-                    {
-                        var buttonText = await button.InnerTextAsync();
-                        var isVisible = await button.IsVisibleAsync();
-                        var id = await button.GetAttributeAsync("id");
-                        var role = await button.GetAttributeAsync("role");
-                        var type = await button.GetAttributeAsync("type");
-                        var tabIndex = await button.GetAttributeAsync("tabindex");
-                        
-                        Console.WriteLine($"  Share Button {i + 1}: '{buttonText.Trim()}'");
-                        Console.WriteLine($"    Visible: {isVisible}, Type: {type}, Role: {role}, TabIndex: {tabIndex}");
-                        if (!string.IsNullOrEmpty(id))
-                        {
-                            Console.WriteLine($"    ID: {id}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"  Share Button {i + 1}: Could not read properties - {ex.Message}");
-                    }
-                }
-                
-                Console.WriteLine($"\n📝 Sample of all buttons (showing first 10 of {buttonCount}):");
-                for (int i = 0; i < Math.Min(buttonCount, 10); i++)
-                {
-                    var button = allButtons.Nth(i);
-                    try
-                    {
-                        var buttonText = await button.InnerTextAsync();
-                        var isVisible = await button.IsVisibleAsync();
-                        var type = await button.GetAttributeAsync("type");
-                        
-                        if (!string.IsNullOrWhiteSpace(buttonText) && buttonText.Length < 50)
-                        {
-                            Console.WriteLine($"  Button {i + 1}: '{buttonText.Trim()}' (Visible: {isVisible}, Type: {type})");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"  Button {i + 1}: Could not read properties - {ex.Message}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ Error logging buttons: {ex.Message}");
-            }
         }
 
         static string GetProfileName(string profilePath)
