@@ -17,15 +17,12 @@ namespace TeamsAutomation
             {
                 Env.Load();
                 
-                // Select browser profile
                 string profilePath = await SelectBrowserProfileAsync();
                 
-                // Initialize browser
                 using var playwright = await Playwright.CreateAsync();
                 var browserContext = await LaunchBrowserAsync(playwright, profilePath);
                 if (browserContext == null) return;
 
-                // Navigate to start URL
                 var page = await NavigateToStartUrlAsync(browserContext);
                 if (page == null)
                 {
@@ -33,10 +30,8 @@ namespace TeamsAutomation
                     return;
                 }
 
-                // Wait for user login
                 await WaitForUserLoginAsync();
 
-                // Load configuration
                 var (channelName, emailsFileLocation) = LoadConfiguration();
                 if (channelName == null || emailsFileLocation == null)
                 {
@@ -44,7 +39,6 @@ namespace TeamsAutomation
                     return;
                 }
 
-                // Find and interact with the channel
                 var channelLocator = await FindChannelAsync(page, channelName);
                 if (channelLocator == null)
                 {
@@ -52,21 +46,18 @@ namespace TeamsAutomation
                     return;
                 }
 
-                // Open share dialog
                 if (!await OpenShareDialogAsync(page, channelLocator))
                 {
                     await browserContext.CloseAsync();
                     return;
                 }
 
-                // Add emails to share list
                 if (!await AddEmailsToShareAsync(page, emailsFileLocation))
                 {
                     await browserContext.CloseAsync();
                     return;
                 }
 
-                // Click the share button
                 await ClickShareButtonAsync(page);
 
                 Console.WriteLine("Press any key to close the browser...");
@@ -81,7 +72,7 @@ namespace TeamsAutomation
 
         static async Task<string> SelectBrowserProfileAsync()
         {
-            await Task.CompletedTask; // Make method properly async
+            await Task.CompletedTask;
             var userDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "Edge", "User Data");
             var profileDirs = Directory.GetDirectories(userDataDir, "Profile *")
                 .Select(p => new { Path = p, Name = GetProfileName(p) })
@@ -117,7 +108,7 @@ namespace TeamsAutomation
                 var browserContext = await playwright.Chromium.LaunchPersistentContextAsync(profilePath, new BrowserTypeLaunchPersistentContextOptions
                 {
                     Headless = false,
-                    Channel = "msedge", // Use Microsoft Edge browser
+                    Channel = "msedge",
                 });
                 return browserContext;
             }
@@ -191,13 +182,11 @@ namespace TeamsAutomation
 
             while (!channelFound && scrollAttempts < 10)
             {
-                // Look for the exact channel name - use a more specific selector
                 var allChannels = page.Locator("div[role='treeitem']");
                 var channelCount = await allChannels.CountAsync();
 
                 Console.WriteLine($"Found {channelCount} channels in the sidebar");
 
-                // Find the exact match for the channel name
                 for (int i = 0; i < channelCount; i++)
                 {
                     var channel = allChannels.Nth(i);
@@ -209,11 +198,9 @@ namespace TeamsAutomation
                         channelFound = true;
                         Console.WriteLine($"Channel '{channelName}' found at position {i}. Text: '{channelText.Trim()}'");
 
-                        // Scroll the found channel into view and make it visible
                         await channelLocator.ScrollIntoViewIfNeededAsync();
-                        await Task.Delay(500); // Wait for scroll to complete
+                        await Task.Delay(500);
 
-                        // Verify it's actually visible in the viewport
                         var isVisible = await channelLocator.IsVisibleAsync();
                         Console.WriteLine($"Channel is visible in viewport: {isVisible}");
 
@@ -230,10 +217,9 @@ namespace TeamsAutomation
                 {
                     scrollAttempts++;
                     Console.WriteLine($"Channel not found, scrolling attempt {scrollAttempts}...");
-                    // Try to scroll the sidebar to load more channels
                     var sidebar = page.Locator("div[role='tree']").First;
                     await sidebar.EvaluateAsync("el => el.scrollBy(0, 300)");
-                    await Task.Delay(1000); // Wait for new channels to load
+                    await Task.Delay(1000);
                 }
             }
 
@@ -248,8 +234,7 @@ namespace TeamsAutomation
 
         static async Task<bool> OpenShareDialogAsync(IPage page, ILocator channelLocator)
         {
-            // Click on the 'More options' button (...)
-            await Task.Delay(500); // Wait for UI to update after hover
+            await Task.Delay(500);
             var moreOptionsButton = channelLocator.Locator("button[aria-label*='More options'], button[title*='More options']").First;
             try
             {
@@ -262,16 +247,13 @@ namespace TeamsAutomation
                 return false;
             }
 
-            // Enumerate and log all visible menu items before clicking 'Share channel'
             await LogMenuItemsAsync(page);
 
-            // Hover over 'Share channel' to reveal submenu
             if (!await HoverShareChannelAsync(page))
             {
                 return false;
             }
 
-            // Click 'With people' in the submenu
             return await ClickWithPeopleAsync(page);
         }
 
@@ -303,9 +285,8 @@ namespace TeamsAutomation
                     await shareChannelMenuItemLocator.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 3000 });
                     if (await shareChannelMenuItemLocator.IsVisibleAsync())
                     {
-                        // Hover first, then click to reveal submenu
                         await shareChannelMenuItemLocator.HoverAsync();
-                        await Task.Delay(500); // Wait for submenu to appear
+                        await Task.Delay(500);
                         Console.WriteLine($"Hovered over 'Share channel' (attempt {attempt})");
                         shareChannelClicked = true;
                         break;
@@ -362,7 +343,6 @@ namespace TeamsAutomation
 
         static async Task<bool> AddEmailsToShareAsync(IPage page, string emailsFileLocation)
         {
-            // Find the email input box
             var inputBox = await FindEmailInputBoxAsync(page);
             if (inputBox == null)
             {
@@ -370,10 +350,8 @@ namespace TeamsAutomation
                 return false;
             }
 
-            // Read and process emails from file
             var emails = await ReadEmailsFromFileAsync(emailsFileLocation);
             
-            // Add each email to the share list
             foreach (var email in emails)
             {
                 if (!string.IsNullOrWhiteSpace(email))
@@ -493,7 +471,6 @@ namespace TeamsAutomation
         {
             try
             {
-                // Common selectors for suggestion dropdowns in Teams/Office365
                 var suggestionSelectors = new[]
                 {
                     "[role='listbox']",
@@ -519,7 +496,7 @@ namespace TeamsAutomation
             }
             catch
             {
-                return false; // If error checking, assume no suggestions
+                return false;
             }
         }
 
@@ -529,7 +506,6 @@ namespace TeamsAutomation
             
             try
             {
-                // Strategy 1: Try the dialog actions area first (most specific)
                 var dialogShareButton = page.Locator("div.fui-DialogActions button:has-text('Share')");
                 var dialogCount = await dialogShareButton.CountAsync();
                 
@@ -544,7 +520,6 @@ namespace TeamsAutomation
                     return dialogShareButton.Last;
                 }
                 
-                // Strategy 2: Look for the button that doesn't contain "with people"
                 var shareButtons = page.Locator("button:has-text('Share')");
                 var shareCount = await shareButtons.CountAsync();
                 
@@ -558,7 +533,6 @@ namespace TeamsAutomation
                     
                     Console.WriteLine($"  Button {i + 1}: '{trimmedText}'");
                     
-                    // Look for the button that says exactly "Share" (not "Share with people")
                     if (trimmedText.Equals("Share", StringComparison.OrdinalIgnoreCase))
                     {
                         Console.WriteLine($"✅ Found exact 'Share' button at index {i}");
@@ -566,7 +540,6 @@ namespace TeamsAutomation
                     }
                 }
                 
-                // Strategy 3: Use tabindex to find the main action button
                 var tabIndexButtons = page.Locator("button[tabindex='0']:has-text('Share')");
                 var tabIndexCount = await tabIndexButtons.CountAsync();
                 
@@ -588,34 +561,29 @@ namespace TeamsAutomation
 
         static async Task ClickShareButtonAsync(IPage page)
         {
-            // First, let's enumerate all buttons in the dialog to see what's available
             await LogAllButtonsAsync(page);
             
-            // Try to find the unique share button intelligently
             var shareButton = await FindUniqueShareButtonAsync(page);
             
             if (shareButton != null)
             {
-                // Try to click the found button
                 bool clicked = await TryClickButtonAsync(shareButton, "Smart-detected Share button");
                 
                 if (clicked)
                 {
-                    return; // Success!
+                    return;
                 }
             }
             
-            // Fallback: Use the old method with improved selectors
             Console.WriteLine("🔄 Falling back to selector-based approach...");
             
-            // Use optimized selector strategies based on actual testing
             var shareButtonSelectors = new[]
             {
-                "div.fui-DialogActions button:has-text('Share')", // This one works - try it first!
-                "button[role='button']:has-text('Share'):not(:has-text('with people'))", // Exclude "Share with people"
-                "button.r1alrhcs:has-text('Share'):not(:has-text('with people'))", // Using CSS class but exclude "with people"
-                "button[tabindex='0']:has-text('Share')", // Use tabindex attribute
-                "button:has-text('Share'):not([id*='splitButton'])" // Exclude split button
+                "div.fui-DialogActions button:has-text('Share')",
+                "button[role='button']:has-text('Share'):not(:has-text('with people'))",
+                "button.r1alrhcs:has-text('Share'):not(:has-text('with people'))",
+                "button[tabindex='0']:has-text('Share')",
+                "button:has-text('Share'):not([id*='splitButton'])"
             };
             
             bool fallbackSuccess = false;
@@ -678,11 +646,9 @@ namespace TeamsAutomation
                     
                     if (await button.IsVisibleAsync())
                     {
-                        // Scroll the button into view first
                         await button.ScrollIntoViewIfNeededAsync();
                         await Task.Delay(500);
                         
-                        // Try clicking with different methods
                         try
                         {
                             await button.ClickAsync(new() { Force = true });
@@ -692,7 +658,6 @@ namespace TeamsAutomation
                         catch (Exception clickEx)
                         {
                             Console.WriteLine($"Regular click failed: {clickEx.Message}");
-                            // If regular click fails, try using JavaScript click
                             await button.EvaluateAsync("element => element.click()");
                             Console.WriteLine($"✅ Successfully clicked Share button using JavaScript with {description} (attempt {attempt})");
                             return true;
@@ -724,7 +689,6 @@ namespace TeamsAutomation
                 var buttonCount = await allButtons.CountAsync();
                 Console.WriteLine($"🔍 Found {buttonCount} buttons in the dialog:");
                 
-                // Specifically look for Share-related buttons
                 var shareButtons = page.Locator("button:has-text('Share')");
                 var shareButtonCount = await shareButtons.CountAsync();
                 Console.WriteLine($"📋 Found {shareButtonCount} buttons containing 'Share':");
@@ -754,7 +718,6 @@ namespace TeamsAutomation
                     }
                 }
                 
-                // Log a few general buttons for context (limit to first 10)
                 Console.WriteLine($"\n📝 Sample of all buttons (showing first 10 of {buttonCount}):");
                 for (int i = 0; i < Math.Min(buttonCount, 10); i++)
                 {
@@ -765,7 +728,6 @@ namespace TeamsAutomation
                         var isVisible = await button.IsVisibleAsync();
                         var type = await button.GetAttributeAsync("type");
                         
-                        // Only show if it has meaningful text
                         if (!string.IsNullOrWhiteSpace(buttonText) && buttonText.Length < 50)
                         {
                             Console.WriteLine($"  Button {i + 1}: '{buttonText.Trim()}' (Visible: {isVisible}, Type: {type})");
@@ -808,7 +770,6 @@ namespace TeamsAutomation
             }
             catch (Exception)
             {
-                // Fallback to directory name in case of any error
                 return Path.GetFileName(profilePath);
             }
 
