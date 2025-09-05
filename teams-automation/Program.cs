@@ -59,6 +59,8 @@ namespace TeamsAutomation
                 }
 
                 await ClickShareButtonAsync(page);
+                // extra wait to see what happens on screen, seems like the writeline just continues
+                await Task.Delay(5000);
 
                 Console.WriteLine("Press any key to close the browser...");
                 Console.ReadKey();
@@ -351,13 +353,16 @@ namespace TeamsAutomation
             }
 
             var emails = await ReadEmailsFromFileAsync(emailsFileLocation);
-            
+            var total = emails.Count;
+            int current = 1;
             foreach (var email in emails)
             {
                 if (!string.IsNullOrWhiteSpace(email))
                 {
+                    Console.WriteLine($"Adding {current}/{total}: {email}");
                     await AddSingleEmailAsync(inputBox, email, page);
                 }
+                current++;
             }
 
             return true;
