@@ -399,4 +399,4 @@ FodyWeavers.xsd
 
 # Environment files
 .env
-emails.csv
+emails.csvteams-automation/emails-test.csv
