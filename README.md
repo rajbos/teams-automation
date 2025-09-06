@@ -51,10 +51,27 @@ The application uses `emails.csv` to process data. This currently only supports 
 ## Features
 
 - Automated Teams login (with manual login flow)
-- Batch operations based on CSV input
+- **Batch processing**: Automatically processes emails in batches of 25 to prevent issues with large user lists
+- **Completion verification**: Waits for completion confirmation after each batch before continuing
+- **Error handling**: Stops processing if completion confirmation is not received
 - Configurable through environment variables
 
 The default is to add share the channel you configured to all the users in the provided CSV file into the channel.
+
+### Batch Processing Details
+
+When processing large lists of users (hundreds of people), the application automatically:
+
+1. **Splits emails into batches of 25** to prevent UI overload and timeout issues
+2. **Processes each batch sequentially**:
+   - Adds all 25 emails to the input field
+   - Clicks the "Add" button to process the batch
+   - Waits up to 30 seconds for a completion message
+   - Shows an error and stops if no completion confirmation appears
+3. **Final share action**: After all batches are successfully processed, clicks the final "Share" button
+4. **Progress tracking**: Shows clear progress for each batch and overall completion status
+
+This approach ensures reliability when working with large user lists and provides clear feedback if something goes wrong.
 
 ## Configuration
 
@@ -82,6 +99,16 @@ dotnet watch run
 ```
 dotnet publish
 ```
+
+## Testing
+
+To test the batching logic without running the full Teams automation:
+
+```
+dotnet run -- --test
+```
+
+This will verify that the email batching functionality works correctly with the test dataset.
 
 ## License
 
