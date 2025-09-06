@@ -13,6 +13,13 @@ namespace TeamsAutomation
     {
         static async Task Main(string[] args)
         {
+            // Check for test mode
+            if (args.Length > 0 && args[0] == "--test")
+            {
+                await RunBatchingTest();
+                return;
+            }
+            
             try
             {
                 Env.Load();
@@ -58,6 +65,7 @@ namespace TeamsAutomation
                     return;
                 }
 
+                Console.WriteLine("\n🎯 All batches completed. Clicking final Share button...");
                 await ClickShareButtonAsync(page);
                 // extra wait to see what happens on screen, seems like the writeline just continues
                 await Task.Delay(5000);
@@ -354,17 +362,47 @@ namespace TeamsAutomation
 
             var emails = await ReadEmailsFromFileAsync(emailsFileLocation);
             var total = emails.Count;
-            int current = 1;
-            foreach (var email in emails)
+            
+            // Process emails in batches of 25
+            const int batchSize = 25;
+            var batches = new List<List<string>>();
+            
+            for (int i = 0; i < emails.Count; i += batchSize)
             {
-                if (!string.IsNullOrWhiteSpace(email))
-                {
-                    Console.WriteLine($"Adding {current}/{total}: {email}");
-                    await AddSingleEmailAsync(inputBox, email, page);
-                }
-                current++;
+                var batch = emails.Skip(i).Take(batchSize).ToList();
+                batches.Add(batch);
             }
-
+            
+            Console.WriteLine($"Processing {total} emails in {batches.Count} batches of up to {batchSize} emails each.");
+            
+            for (int batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                var currentBatch = batches[batchIndex];
+                Console.WriteLine($"\n--- Processing Batch {batchIndex + 1}/{batches.Count} ({currentBatch.Count} emails) ---");
+                
+                // Add all emails in the current batch
+                for (int emailIndex = 0; emailIndex < currentBatch.Count; emailIndex++)
+                {
+                    var email = currentBatch[emailIndex];
+                    if (!string.IsNullOrWhiteSpace(email))
+                    {
+                        var globalIndex = batchIndex * batchSize + emailIndex + 1;
+                        Console.WriteLine($"Adding {globalIndex}/{total}: {email}");
+                        await AddSingleEmailAsync(inputBox, email, page);
+                    }
+                }
+                
+                // After adding all emails in the batch, click Add button and wait for completion
+                if (!await ProcessBatchCompletionAsync(page, batchIndex + 1, batches.Count))
+                {
+                    Console.WriteLine($"❌ Failed to complete batch {batchIndex + 1}. Stopping processing.");
+                    return false;
+                }
+                
+                Console.WriteLine($"✅ Batch {batchIndex + 1}/{batches.Count} completed successfully.");
+            }
+            
+            Console.WriteLine($"\n🎉 All {batches.Count} batches processed successfully!");
             return true;
         }
 
@@ -503,6 +541,159 @@ namespace TeamsAutomation
             }
         }
 
+        static async Task<bool> ProcessBatchCompletionAsync(IPage page, int currentBatch, int totalBatches)
+        {
+            Console.WriteLine($"🔄 Processing completion for batch {currentBatch}/{totalBatches}...");
+            
+            // For all batches except the last one, click the "Add" button
+            if (currentBatch < totalBatches)
+            {
+                if (!await ClickAddButtonAsync(page))
+                {
+                    Console.WriteLine("❌ Failed to click Add button.");
+                    return false;
+                }
+                
+                // Wait for completion message
+                if (!await WaitForCompletionMessageAsync(page))
+                {
+                    Console.WriteLine("❌ Completion message did not appear after clicking Add button.");
+                    return false;
+                }
+            }
+            
+            return true;
+        }
+
+        static async Task<bool> ClickAddButtonAsync(IPage page)
+        {
+            Console.WriteLine("🔍 Looking for Add button...");
+            
+            // Look for different possible Add button selectors
+            var addButtonSelectors = new[]
+            {
+                "button:has-text('Add')",
+                "button[aria-label*='Add']",
+                "button[title*='Add']",
+                "div.fui-DialogActions button:has-text('Add')",
+                ".ms-Dialog-actions button:has-text('Add')"
+            };
+            
+            foreach (var selector in addButtonSelectors)
+            {
+                try
+                {
+                    var addButton = page.Locator(selector);
+                    var count = await addButton.CountAsync();
+                    
+                    if (count > 0)
+                    {
+                        Console.WriteLine($"🎯 Found {count} Add button(s) using selector: {selector}");
+                        
+                        // Use the first visible Add button
+                        for (int i = 0; i < count; i++)
+                        {
+                            var button = addButton.Nth(i);
+                            if (await button.IsVisibleAsync())
+                            {
+                                await button.ScrollIntoViewIfNeededAsync();
+                                await Task.Delay(500);
+                                
+                                try
+                                {
+                                    await button.ClickAsync(new() { Force = true });
+                                    Console.WriteLine("✅ Successfully clicked Add button");
+                                    return true;
+                                }
+                                catch (Exception clickEx)
+                                {
+                                    Console.WriteLine($"Regular click failed: {clickEx.Message}, trying JavaScript click");
+                                    await button.EvaluateAsync("element => element.click()");
+                                    Console.WriteLine("✅ Successfully clicked Add button using JavaScript");
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Selector {selector} failed: {ex.Message}");
+                }
+            }
+            
+            Console.WriteLine("❌ Could not find or click Add button");
+            return false;
+        }
+
+        static async Task<bool> WaitForCompletionMessageAsync(IPage page)
+        {
+            Console.WriteLine("⏳ Waiting for completion message...");
+            
+            // Look for different possible completion message indicators
+            var completionSelectors = new[]
+            {
+                ":has-text('completed')",
+                ":has-text('Complete')",
+                ":has-text('Success')",
+                ":has-text('Added')",
+                ":has-text('Done')",
+                "[role='alert']:has-text('completed')",
+                ".ms-MessageBar:has-text('completed')",
+                ".fui-MessageBar:has-text('completed')"
+            };
+            
+            var maxWaitTime = 30000; // 30 seconds
+            var checkInterval = 500; // 0.5 seconds
+            var elapsedTime = 0;
+            
+            while (elapsedTime < maxWaitTime)
+            {
+                foreach (var selector in completionSelectors)
+                {
+                    try
+                    {
+                        var elements = page.Locator(selector);
+                        var count = await elements.CountAsync();
+                        
+                        if (count > 0)
+                        {
+                            // Check if any of the elements are visible
+                            for (int i = 0; i < count; i++)
+                            {
+                                var element = elements.Nth(i);
+                                if (await element.IsVisibleAsync())
+                                {
+                                    var text = await element.InnerTextAsync();
+                                    Console.WriteLine($"✅ Found completion message: '{text.Trim()}'");
+                                    
+                                    // Wait a bit more for the message to be processed
+                                    await Task.Delay(2000);
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Continue with next selector if this one fails
+                        Console.WriteLine($"Completion check failed for selector {selector}: {ex.Message}");
+                    }
+                }
+                
+                await Task.Delay(checkInterval);
+                elapsedTime += checkInterval;
+                
+                if (elapsedTime % 5000 == 0) // Log every 5 seconds
+                {
+                    Console.WriteLine($"Still waiting for completion message... ({elapsedTime/1000}s elapsed)");
+                }
+            }
+            
+            Console.WriteLine($"❌ Timeout waiting for completion message after {maxWaitTime/1000} seconds");
+            return false;
+        }
+
         static async Task<ILocator?> FindUniqueShareButtonAsync(IPage page)
         {
             Console.WriteLine("🎯 Finding the correct Share button...");
@@ -621,6 +812,71 @@ namespace TeamsAutomation
             }
 
             return Path.GetFileName(profilePath);
+        }
+
+        // Test method to verify batching logic
+        static async Task RunBatchingTest()
+        {
+            Console.WriteLine("🧪 Running batching logic test...");
+            
+            // Test with emails-test.csv (52 emails)
+            var testFile = "emails-test.csv";
+            if (!File.Exists(testFile))
+            {
+                Console.WriteLine($"❌ Test file {testFile} not found");
+                return;
+            }
+
+            var emails = await ReadEmailsFromFileAsync(testFile);
+            Console.WriteLine($"📧 Loaded {emails.Count} emails from {testFile}");
+
+            // Simulate batching logic
+            const int batchSize = 25;
+            var batches = new List<List<string>>();
+            
+            for (int i = 0; i < emails.Count; i += batchSize)
+            {
+                var batch = emails.Skip(i).Take(batchSize).ToList();
+                batches.Add(batch);
+            }
+            
+            Console.WriteLine($"📦 Created {batches.Count} batches:");
+            for (int i = 0; i < batches.Count; i++)
+            {
+                Console.WriteLine($"  Batch {i + 1}: {batches[i].Count} emails");
+            }
+
+            // Verify expected behavior
+            var expectedBatches = (int)Math.Ceiling((double)emails.Count / batchSize);
+            if (batches.Count == expectedBatches)
+            {
+                Console.WriteLine($"✅ Batching test passed! {batches.Count} batches created as expected");
+                
+                // Check that first batches have 25 emails and last batch has remainder
+                for (int i = 0; i < batches.Count - 1; i++)
+                {
+                    if (batches[i].Count != batchSize)
+                    {
+                        Console.WriteLine($"❌ Batch {i + 1} has {batches[i].Count} emails, expected {batchSize}");
+                        return;
+                    }
+                }
+                
+                var expectedLastBatchSize = emails.Count % batchSize == 0 ? batchSize : emails.Count % batchSize;
+                if (batches.Last().Count == expectedLastBatchSize)
+                {
+                    Console.WriteLine($"✅ Last batch size correct: {batches.Last().Count} emails");
+                    Console.WriteLine("🎉 All batching tests passed!");
+                }
+                else
+                {
+                    Console.WriteLine($"❌ Last batch has {batches.Last().Count} emails, expected {expectedLastBatchSize}");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"❌ Batching test failed! Expected {expectedBatches} batches, got {batches.Count}");
+            }
         }
     }
 }
